@@ -26,6 +26,7 @@ sipdb-pipeline/
 ✅ Dual-threshold approach (relaxed + stringent)  
 ✅ Sliding window analysis for density gradients  
 ✅ Substrate-specific analysis support  
+✅ Checkpoint/resume functionality for long-running analyses  
 ✅ Applicable to both new and legacy SIP experiments
 
 ---
@@ -86,10 +87,12 @@ source("R/sip_meta_analysis_pipeline_v1.0.R")
 results <- run_complete_sip_analysis(
   studies = studies,
   output_prefix = "sip_analysis_v1.0",
-  heavy_threshold = 1.700,         # Relaxed: 1.700 g/ml (default: 1.700)
-  run_dual_threshold = TRUE,       # Run both relaxed AND stringent
-  stringent_threshold = 1.725,     # Stringent: 1.725 g/ml (default: 1.725)
-  n_cores = 4                      # Adjust based on your system
+  out_dir = "~/path/to/your/output_folder",  # <- Set your output directory here
+  heavy_threshold = 1.700,           # Relaxed: 1.700 g/ml
+  run_dual_threshold = TRUE,         # Run both relaxed AND stringent
+  stringent_threshold = 1.725,       # Stringent: 1.725 g/ml
+  n_cores = 4,                       # Adjust based on your system
+  run_id = "my_analysis_v1"          # Name your run for checkpointing
 )
 
 # Analysis will take 15-60 minutes depending on system and number of cores
@@ -143,9 +146,81 @@ db_results <- build_optimized_sip_database_v7(
 
 ---
 
+## 🔄 Checkpoint/Resume Functionality
+
+The pipeline automatically saves checkpoints after each major step. If an analysis fails (memory issues, cluster timeout, etc.), you can resume from where it left off.
+
+### How It Works
+
+Checkpoints are saved to `{out_dir}/checkpoints/` with the pattern:
+```
+{run_id}_step01_compatibility.rds
+{run_id}_step03_relaxed.rds
+{run_id}_step04_master_relaxed.rds
+{run_id}_step05_stringent.rds
+{run_id}_step06_master_stringent.rds
+{run_id}_step07_consensus.rds
+{run_id}_step08_summaries.rds
+```
+
+### First Run (Give It a Memorable Name)
+```r
+results <- run_complete_sip_analysis(
+  studies = studies,
+  out_dir = main_dir,
+  run_id = "sipdb_analysis_v1",  # Name your run!
+  n_cores = 4
+)
+```
+
+### Check Progress (If Run Failed)
+```r
+# See which steps completed
+check_pipeline_progress(run_id = "sipdb_analysis_v1")
+
+# Output:
+# ════════════════════════════════════════════════════════════
+# CHECKPOINT STATUS
+# ════════════════════════════════════════════════════════════
+# 
+# 🔖 Run ID: sipdb_analysis_v1
+# ----------------------------------------
+#   ✅ step01: Compatibility check (2025-01-15 14:32)
+#   ✅ step03: Relaxed analysis (2025-01-15 14:45)
+#   ✅ step04: Master relaxed (2025-01-15 14:46)
+#   ⬜ step05: Stringent analysis
+#   ⬜ step06: Master stringent
+#   ⬜ step07: Consensus
+#   ⬜ step08: Summaries
+```
+
+### Resume from Last Checkpoint
+```r
+# Resume with the SAME run_id
+results <- run_complete_sip_analysis(
+  studies = studies,
+  out_dir = main_dir,
+  resume = TRUE,                   # ← Enable resume mode
+  run_id = "sipdb_analysis_v1",    # ← Same run_id as before
+  n_cores = 4
+)
+
+# Pipeline will skip completed steps and continue from where it stopped
+```
+
+### Checkpoint Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `resume` | `FALSE` | Set `TRUE` to load from existing checkpoints |
+| `run_id` | Auto-generated timestamp | Unique identifier for the run |
+| `checkpoint_dir` | `{out_dir}/checkpoints` | Where checkpoint files are stored |
+
+---
+
 ## 📊 Output Files
 
-All results are saved to `~/output/output_SIPdb_pipeline_v1.0/`:
+All results are saved to `{out_dir}/`:
 ```
 output_SIPdb_pipeline_v1.0/
 ├─ tables/
@@ -157,6 +232,8 @@ output_SIPdb_pipeline_v1.0/
 │   └─ sip_analysis_v1.0_complete_*.RData   # Complete R workspace
 ├─ consensus_results/
 │   └─ sip_analysis_v1.0_consensus_*.csv    # High-confidence incorporators
+├─ checkpoints/                              # Checkpoint files for resume
+│   └─ {run_id}_step*.rds
 ├─ debug_logs/                               # Analysis logs per study
 ├─ qc_reports/                               # Quality control reports
 └─ plots/                                    # Generated visualizations
@@ -166,6 +243,31 @@ output_SIPdb_pipeline_v1.0/
 
 ## 🔧 Advanced Usage
 
+### Full Configuration (All Parameters)
+```r
+results <- run_complete_sip_analysis(
+  # Required
+  studies = studies,
+  
+  # Output settings
+  output_prefix = "sip_analysis_v1.0",
+  out_dir = "~/output/my_analysis",
+  
+  # Density thresholds
+  heavy_threshold = 1.700,
+  stringent_threshold = 1.725,
+  run_dual_threshold = TRUE,
+  
+  # Performance
+  n_cores = 4,
+  
+  # Checkpoint/resume
+  resume = FALSE,
+  run_id = "my_analysis_v1",
+  checkpoint_dir = NULL  # Uses out_dir/checkpoints by default
+)
+```
+
 ### Single Threshold Analysis (Faster)
 ```r
 # Run only relaxed threshold
@@ -173,7 +275,8 @@ results <- run_complete_sip_analysis(
   studies = studies,
   heavy_threshold = 1.700,
   run_dual_threshold = FALSE,  # Skip stringent analysis
-  n_cores = 8
+  n_cores = 8,
+  run_id = "quick_test"
 )
 ```
 
@@ -185,7 +288,8 @@ results <- run_complete_sip_analysis(
   heavy_threshold = 1.695,      # More permissive
   stringent_threshold = 1.735,  # More conservative
   run_dual_threshold = TRUE,
-  n_cores = 4
+  n_cores = 4,
+  run_id = "custom_thresholds"
 )
 ```
 
@@ -218,6 +322,7 @@ clear_cache()
 - **Cross-environment comparisons**: 22 studies across soil, rhizosphere, and wastewater
 - **Sliding window analysis**: Robust identification across density gradients
 - **Substrate-specific analysis**: Handles shared-control and matched-control designs
+- **Checkpoint/resume**: Long analyses can be resumed after failures
 - **Meta-analysis ready**: Standardized taxonomy and FASTA sequences
 
 **Applications:**
@@ -256,8 +361,8 @@ clear_cache()
 
 If you use SIPdb v1.0 or this pipeline, please cite:
 
-**Trentin, A.B., Wilhelm, R.C., Gonzalez, J.M., & Shabtai, I.A. (2025).**  
-*SIPdb v1.0: A comprehensive database for stable isotope probing meta-analysis.*  
+*Manuscript in preparation — citation will be updated upon publication.*
+
 GitHub: https://github.com/alexbtrentin/sipdb-pipeline  
 OSF: https://osf.io/cwg6r/
 
@@ -273,6 +378,14 @@ MIT License — free to use, modify, and adapt with attribution.
 
 ### Common Issues
 
+**"Object 'main_dir' not found"**
+- Set `main_dir` BEFORE sourcing the pipeline:
+```r
+  main_dir <- "~/output/my_analysis"
+  source("R/sip_meta_analysis_pipeline_v1.0.R")
+```
+- Or always pass `out_dir` explicitly in the function call
+
 **"No valid gradient data"**
 - Ensure `gradient_pos_density` or `gradient_position` columns exist
 - Check density values are in biological range (1.650-1.800 g/ml)
@@ -281,8 +394,15 @@ MIT License — free to use, modify, and adapt with attribution.
 - Minimum 2 labeled and 2 unlabeled samples required per comparison
 - Check sample identification with `identify_labeled_unlabeled_samples()`
 
-**"Object 'PIPELINE_VERSION' not found"**
-- Add `PIPELINE_VERSION <- "1.0"` after `set.seed(42)` in the script (around line 46)
+**Analysis failed mid-run**
+- Use checkpoint/resume functionality:
+```r
+  results <- run_complete_sip_analysis(
+    studies = studies,
+    resume = TRUE,
+    run_id = "your_original_run_id"
+  )
+```
 
 **ALDEx2 skipped**
 - Normal for large datasets (>3000 taxa or >50 samples)
@@ -290,8 +410,14 @@ MIT License — free to use, modify, and adapt with attribution.
 
 **Memory issues**
 - Reduce `n_cores` to lower memory footprint
+- Use checkpoint/resume to break analysis into chunks
 - Run studies individually and combine later
 - Use `clear_cache()` between analyses
+
+**HPC/cluster timeout**
+- Use `run_id` to name your run
+- If job times out, resubmit with `resume = TRUE`
+- Checkpoints persist across sessions
 
 ---
 
@@ -309,5 +435,5 @@ For questions, bug reports, or collaboration inquiries, please open an issue on 
 
 ---
 
-**Version:** 1.0  
-**Last Updated:** December 2025
+**Version:** 1.0.1  
+**Last Updated:** February 2026
